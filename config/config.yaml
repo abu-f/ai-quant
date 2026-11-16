@@ -1,0 +1,46 @@
+# aquant 运行配置
+# 修改后立即生效，无需重装。数据目录默认 ~/.local/share/aquant
+
+app:
+  name: aquant
+  # 数据/缓存/报告目录，留空则用 $AQUANT_HOME 或 ~/.local/share/aquant
+  # 建议放在 WSL 原生文件系统（不要放 /mnt/c），SQLite 写入更快更稳
+  home: null
+
+data:
+  # 日线主源与备用源：tencent / sina
+  bar_priority: [tencent, sina]
+  # 实时快照优先源：eastmoney / sina
+  quote_priority: [eastmoney, sina]
+  adjust: qfq              # qfq 前复权（默认）/ hfq 后复权 / bfq 不复权
+  history_days: 800        # 默认拉取根数
+  request_timeout: 12
+  retry: 3
+  min_interval_ms: 250     # 全局请求间隔，避免触发接口风控
+  cache_ttl_minutes: 30    # 行情缓存有效期
+  snapshot_ttl_minutes: 10 # 全市场快照缓存有效期
+  # 全市场列表源：东财 clist 优先，被限流时自动切新浪（字段口径一致）
+  snapshot_priority: [eastmoney, sina]
+  snapshot_cooldown_minutes: 15  # 某个源失败后 15 分钟内不再优先尝试
+  intraday_ttl_seconds: 30 # 分钟线内存缓存（1m/5m/15m/30m/60m，不落库）
+  # 盘中（15:10 前）自动剔除当日未收盘的 K 线，避免指标与信号反复跳动
+  exclude_intraday_bar: true
+
+backtest:
+  initial_capital: 100000
+  commission_rate: 0.00025 # 佣金万 2.5
+  min_commission: 5        # 单笔最低 5 元
+  stamp_tax: 0.0005        # 卖出印花税万 5
+  transfer_fee: 0.00001    # 过户费万 0.1
+  slippage_bps: 2          # 单边滑点 2bp
+  risk_free_rate: 0.02
+  lot_size: 100
+
+alerts:
+  check_interval: 60       # alert check --loop 的默认间隔（秒）
+  cooldown_minutes: 240    # 预留：同一规则提醒冷却
+  notify_desktop: false    # WSLg 下可设为 true 使用 notify-send
+
+web:
+  host: 127.0.0.1
+  port: 8770

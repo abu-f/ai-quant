@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aquant · A 股研究台</title>
+<script src="{{ url_for('static', filename='echarts.min.js') }}"></script>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#131721; --panel2:#171c28; --line:#232a38;
+    --text:#e6e8ee; --muted:#8b93a7; --up:#ef4d56; --down:#2bb673; --accent:#5b9dff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;}
+  a{color:var(--accent);text-decoration:none}
+  .top{display:flex;align-items:center;gap:16px;padding:14px 22px;
+       border-bottom:1px solid var(--line);background:var(--panel);}
+  .brand{font-size:18px;font-weight:600;letter-spacing:.5px}
+  .brand span{color:var(--accent)}
+  .tag{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;
+       padding:2px 10px}
+  .spacer{flex:1}
+  .btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;
+       padding:7px 14px;cursor:pointer;font-size:13px}
+  .btn:hover{border-color:#3d4a63}
+  .btn.primary{background:#1d3a63;border-color:#2b5288}
+  nav{display:flex;gap:4px;padding:0 18px;border-bottom:1px solid var(--line);
+      background:var(--panel);}
+  nav button{background:none;border:none;color:var(--muted);padding:11px 14px;cursor:pointer;
+             font-size:14px;border-bottom:2px solid transparent}
+  nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+  main{padding:18px 22px 60px}
+  section{display:none}
+  section.active{display:block}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;
+        margin-bottom:16px}
+  .card h3{margin:0 0 12px;font-size:14px;font-weight:600;color:var(--muted);letter-spacing:.4px}
+  table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+  th{text-align:right;color:var(--muted);font-weight:500;font-size:12px;padding:8px 10px;
+     border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  td{padding:9px 10px;border-bottom:1px solid #1a1f2b;text-align:right;white-space:nowrap}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:#1a2030}
+  .up{color:var(--up)} .down{color:var(--down)} .muted{color:var(--muted)}
+  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;
+        background:#1e2637;color:#a9b4c9;margin-right:4px}
+  .codes-box{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-height:38px;max-width:560px;
+             border:1px solid var(--line);border-radius:8px;padding:4px 6px;background:var(--panel2)}
+  .codes-box:focus-within{border-color:#3d4a63}
+  .codes-box input{border:none;background:transparent;padding:4px 2px;min-width:150px}
+  .chip{display:inline-flex;align-items:center;gap:4px;background:#1d2a42;border:1px solid #2b3f61;
+        color:#cfe0ff;border-radius:6px;padding:2px 4px 2px 8px;font-size:12px}
+  .chip b{font-weight:600;color:#8fb8ff}
+  .chip button{background:none;border:none;color:#8b93a7;cursor:pointer;font-size:14px;
+               line-height:1;padding:0 2px}
+  .chip button:hover{color:#ef8b92}
+  .del{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:6px;
+       width:24px;height:22px;line-height:1;cursor:pointer;font-size:15px;padding:0}
+  .del:hover{border-color:#7a2f35;color:#ef8b92;background:#2a1618}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  input,select{background:var(--panel2);border:1px solid var(--line);color:var(--text);
+               border-radius:8px;padding:7px 10px;font-size:13px;outline:none}
+  input:focus,select:focus{border-color:#3d4a63}
+  #klineChart{width:100%;height:620px}
+  #equityChart{width:100%;height:320px}
+  .metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+  .metric{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .metric .k{font-size:12px;color:var(--muted)}
+  .metric .v{font-size:17px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+  .split{display:grid;grid-template-columns:1fr 280px;gap:16px}
+  @media (max-width:1000px){.split{grid-template-columns:1fr}}
+  .snap dt{color:var(--muted);font-size:12px;margin-top:10px}
+  .snap dd{margin:2px 0 0;font-variant-numeric:tabular-nums}
+  .empty{color:var(--muted);padding:24px;text-align:center}
+  .err{color:#ffb4b4;background:#2a1618;border:1px solid #5a2a2e;border-radius:8px;
+       padding:10px 12px;margin-bottom:12px}
+  footer{position:fixed;bottom:0;left:0;right:0;background:var(--panel);border-top:1px solid var(--line);
+         color:var(--muted);font-size:12px;padding:8px 22px}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="brand">a<span>quant</span></div>
+  <div class="tag">只读行情 · 本地计算 · 无任何交易执行</div>
+  <div class="spacer"></div>
+  <div class="muted" id="clock"></div>
+  <button class="btn" onclick="refreshAll()">刷新</button>
+</div>
+
+<nav>
+  <button class="active" data-tab="watch">自选股</button>
+  <button data-tab="stock">个股分析</button>
+  <button data-tab="backtest">回测</button>
+  <button data-tab="screen">选股</button>
+  <button data-tab="alerts">预警记录</button>
+</nav>
+
+<main>
+  <section id="watch" class="active">
+    <div class="card">
+      <div class="toolbar">
+        <input id="watchInput" placeholder="添加自选：代码，如 600519 / sh600519" style="width:280px"
+               onkeydown="if(event.key==='Enter') addWatch()">
+        <button class="btn primary" onclick="addWatch()">加入自选</button>
+        <button class="btn" onclick="loadWatchlist(true)">刷新行情</button>
+        <span class="muted" id="watchMsg"></span>
+      </div>
+      <h3>自选股 · <span id="watchTs" class="muted"></span></h3>
+      <div id="watchBox" class="empty">加载中…</div>
+    </div>
+  </section>
+
+  <section id="stock">
+    <div class="toolbar">
+      <input id="stockCode" value="600519" placeholder="代码，如 600519 / sh600519" style="width:220px">
+      <select id="stockDays" onchange="loadKline()">
+        <option value="120">120 日</option>
+        <option value="250" selected>250 日</option>
+        <option value="500">500 日</option>
+        <option value="800">800 日</option>
+      </select>
+      <select id="stockPeriod" onchange="loadKline()">
+        <option value="day" selected>日线</option>
+        <option value="week">周线</option>
+        <option value="month">月线</option>
+        <option value="60m">60 分钟</option>
+        <option value="30m">30 分钟</option>
+        <option value="15m">15 分钟</option>
+        <option value="5m">5 分钟</option>
+        <option value="1m">1 分钟</option>
+      </select>
+      <button class="btn primary" onclick="loadKline()">绘制</button>
+      <button class="btn" onclick="loadFinancials()">基本面</button>
+      <button class="btn" id="favBtn" onclick="toggleFav()">☆ 加入自选</button>
+      <label class="muted" style="display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="autoRefresh"> 自动刷新(30s)
+      </label>
+      <span class="muted" id="klineHint"></span>
+    </div>
+    <div class="split">
+      <div class="card" style="margin:0">
+        <div id="klineChart"></div>
+      </div>
+      <div class="card snap" style="margin:0">
+        <h3>指标快照</h3>
+        <div id="snapBox" class="muted">—</div>
+      </div>
+    </div>
+    <div class="card" id="finCard" style="margin-top:16px;display:none">
+      <h3>财务摘要</h3>
+      <div id="finBox"></div>
+    </div>
+  </section>
+
+  <section id="backtest">
+    <div class="card">
+      <div class="toolbar">
+        <div class="codes-box" id="btCodesBox" onclick="document.getElementById('btCodeInput').focus()">
+          <input id="btCodeInput" placeholder="输入代码回车，如 600519" style="width:170px"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();addBtCode(this.value,true);this.value='';}">
+        </div>
+        <select id="btFavSelect" onchange="addFavToBacktest(this)" style="max-width:230px">
+          <option value="">＋ 从自选股选择…</option>
+        </select>
+        <select id="btStrategy">
+          <option value="ma_cross">双均线 ma_cross</option>
+          <option value="macd">MACD</option>
+          <option value="momentum">动量 momentum</option>
+          <option value="boll_break">布林突破</option>
+          <option value="breakout">通道突破</option>
+          <option value="rsi_reversion">RSI 回归</option>
+          <option value="kdj">KDJ</option>
+          <option value="buy_hold">买入持有</option>
+        </select>
+        <input id="btParams" placeholder='参数 JSON，如 {"fast":5,"slow":20}' style="width:240px">
+        <label class="muted" style="display:flex;align-items:center;gap:4px">资金
+          <input id="btCapital" value="100000" title="初始资金（元）" style="width:96px">
+        </label>
+        <select id="btDays">
+          <option value="250">250 日</option>
+          <option value="500" selected>500 日</option>
+          <option value="800">800 日</option>
+          <option value="1200">1200 日</option>
+        </select>
+        <button class="btn primary" onclick="runBacktest()">运行回测</button>
+        <span class="muted" id="btHint"></span>
+      </div>
+      <div id="btError"></div>
+      <div class="metrics" id="btMetrics"></div>
+    </div>
+    <div class="card">
+      <h3>资金曲线（策略 vs 买入持有）</h3>
+      <div id="equityChart"></div>
+    </div>
+    <div class="card">
+      <h3>交易明细</h3>
+      <div id="btTrades" class="empty">运行回测后显示</div>
+    </div>
+  </section>
+
+  <section id="screen">
+    <div class="card">
+      <div class="toolbar">
+        <select id="screenPreset">
+          {% for p in presets %}
+          <option value="{{ p.key }}">{{ p.title }} — {{ p.desc }}</option>
+          {% endfor %}
+        </select>
+        <select id="screenLimit">
+          <option value="20" selected>20 条</option>
+          <option value="30">30 条</option>
+          <option value="50">50 条</option>
+        </select>
+        <button class="btn primary" onclick="runScreen()">筛选</button>
+        <span class="muted">技术类预设需要逐只拉取日线，首次运行可能较慢</span>
+      </div>
+      <div id="screenBox" class="empty">选择预设后点击筛选</div>
+    </div>
+  </section>
+
+  <section id="alerts">
+    <div class="card">
+      <h3>近期预警（本地记录）</h3>
+      <div id="alertBox" class="empty">加载中…</div>
+    </div>
+  </section>
+</main>
+
+<footer>数据来自公开行情接口，可能存在延迟；本工具不含下单/委托功能，所有交易决策与操作由使用者本人完成。</footer>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '-' : Number(v).toFixed(d);
+const fmtPct = (v) => (v === null || v === undefined || Number.isNaN(v)) ? '-' : (v > 0 ? '+' : '') + Number(v).toFixed(2) + '%';
+const cls = (v) => (v > 0 ? 'up' : (v < 0 ? 'down' : ''));
+const big = (v) => {
+  if (v === null || v === undefined || Number.isNaN(v)) return '-';
+  const n = Math.abs(v);
+  if (n >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+  if (n >= 1e4) return (v / 1e4).toFixed(2) + '万';
+  return v.toFixed(2);
+};
+async function getJSON(url, options) {
+  const resp = await fetch(url, options);
+  const text = await resp.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (e) {
+    throw new Error('服务器返回了非 JSON 响应（HTTP ' + resp.status + '）：' + text.slice(0, 100).replace(/\\s+/g, ' '));
+  }
+  if (!resp.ok || (data && data.error)) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+  return data || {};
+}
+function postJSON(url, payload) {
+  return getJSON(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+function setTab(name) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('main section').forEach(s => s.classList.toggle('active', s.id === name));
+  if (name === 'alerts') loadAlerts();
+  if (name === 'watch') loadWatchlist();
+  if (name === 'backtest' && !btRan && btCodes.length) runBacktest();
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+
+/* ---------------- 自选股 ---------------- */
+let favSet = new Set();
+
+async function loadWatchlist(refresh = false) {
+  const box = $('#watchBox');
+  try {
+    const data = await getJSON('/api/watchlist' + (refresh ? '?refresh=1' : ''));
+    favSet = new Set(data.items.map(i => i.code));
+    updateFavBtn();
+    if (!data.items.length) {
+      box.className = 'empty';
+      box.textContent = data.message || '自选股为空，在上方输入代码添加';
+      return;
+    }
+    $('#watchTs').textContent = data.ts || '';
+    let html = '<table><thead><tr><th>代码</th><th>名称</th><th>现价</th><th>涨跌幅</th>'
+      + '<th>成交额</th><th>换手</th><th>PE(TTM)</th><th>PB</th><th>MA20</th><th>RSI</th>'
+      + '<th style="text-align:left">状态</th><th>操作</th></tr></thead><tbody>';
+    for (const it of data.items) {
+      html += '<tr onclick="openStock(\'' + it.code + '\')">'
+        + '<td>' + it.code + '</td><td>' + it.name + '</td>'
+        + '<td class="' + cls(it.pct) + '">' + fmt(it.price) + '</td>'
+        + '<td class="' + cls(it.pct) + '">' + fmtPct(it.pct) + '</td>'
+        + '<td>' + big(it.amount) + '</td><td>' + fmt(it.turnover) + '%</td>'
+        + '<td>' + fmt(it.pe) + '</td><td>' + fmt(it.pb) + '</td>'
+        + '<td>' + fmt(it.ma20) + '</td><td>' + fmt(it.rsi, 1) + '</td>'
+        + '<td style="text-align:left">' + (it.signals || []).map(s => '<span class="pill">' + s + '</span>').join('') + '</td>'
+        + '<td><button class="del" title="移出自选" onclick="event.stopPropagation();removeWatch(\'' + it.code + '\',\'' + it.name + '\')">×</button></td>'
+        + '</tr>';
+    }
+    html += '</tbody></table>';
+    box.className = ''; box.innerHTML = html;
+  } catch (e) {
+    box.className = 'err'; box.textContent = '加载失败：' + e.message;
+  }
+}
+
+async function addWatch() {
+  const input = $('#watchInput');
+  const code = input.value.trim();
+  if (!code) { $('#watchMsg').textContent = '请输入代码'; return; }
+  $('#watchMsg').textContent = '添加中…';
+  try {
+    const d = await postJSON('/api/watchlist/add', { code });
+    $('#watchMsg').textContent = d.message || ('已加入 ' + (d.name || code));
+    input.value = '';
+    await loadWatchlist();
+    await loadFavSet();
+  } catch (e) {
+    $('#watchMsg').textContent = '添加失败：' + e.message;
+  }
+}
+
+async function removeWatch(code, name) {
+  if (!confirm('从自选股移除 ' + (name || code) + '？\n（只删本地关注列表，不影响任何持仓）')) return;
+  try {
+    await postJSON('/api/watchlist/remove', { code });
+    $('#watchMsg').textContent = '已移除 ' + code;
+    await loadWatchlist();
+    await loadFavSet();
+  } catch (e) {
+    $('#watchMsg').textContent = '移除失败：' + e.message;
+  }
+}
+
+function updateFavBtn() {
+  const btn = $('#favBtn');
+  if (!btn) return;
+  const code = currentKlineCode;
+  btn.textContent = (code && favSet.has(code)) ? '★ 已在自选' : '☆ 加入自选';
+}
+
+async function loadFavSet() {
+  try {
+    const d = await getJSON('/api/watchlist/codes');
+    favSet = new Set(d.codes || []);
+    favItems = d.items || [];
+    fillFavSelect();
+    if (!btCodes.length && favItems.length) addBtCode(favItems[0].code, true);
+    updateFavBtn();
+  } catch (e) {
+    /* 自选股状态拉取失败不影响主流程 */
+  }
+}
+
+async function toggleFav() {
+  const code = currentKlineCode || $('#stockCode').value.trim();
+  if (!code) return;
+  try {
+    if (favSet.has(code)) {
+      await postJSON('/api/watchlist/remove', { code });
+      favSet.delete(code);
+      $('#klineHint').textContent = '已移出自选';
+    } else {
+      const d = await postJSON('/api/watchlist/add', { code });
+      favSet.add(code);
+      $('#klineHint').textContent = d.message || '已加入自选';
+    }
+    updateFavBtn();
+  } catch (e) {
+    $('#klineHint').textContent = '操作失败：' + e.message;
+  }
+}
+function openStock(code) {
+  $('#stockCode').value = code;
+  setTab('stock');
+  loadKline();
+}
+
+/* ---------------- K 线 ---------------- */
+let klineChart = null;
+let currentKlineCode = '';
+let refreshTimer = null;
+async function loadKline() {
+  const code = $('#stockCode').value.trim();
+  const days = $('#stockDays').value;
+  const period = $('#stockPeriod').value;
+  const intraday = ['1m', '5m', '15m', '30m', '60m'].includes(period);
+  const count = intraday ? 240 : days;
+  $('#klineHint').textContent = '加载中…';
+  try {
+    const d = await getJSON('/api/kline?code=' + encodeURIComponent(code)
+      + '&days=' + count + '&period=' + period);
+    currentKlineCode = d.code;
+    updateFavBtn();
+    $('#klineHint').textContent = (d.name || '') + ' ' + d.code + ' · ' + d.dates.length + ' 根'
+      + (d.is_intraday ? '（' + period + '，最新 ' + (d.dates[d.dates.length - 1] || '') + '）' : '');
+    renderKline(d);
+    renderSnapshot(d.snapshot, d.name, d.code, period);
+    scheduleRefresh(d.is_intraday);
+  } catch (e) {
+    $('#klineHint').textContent = '失败：' + e.message;
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+  }
+}
+function scheduleRefresh(isIntraday) {
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+  if (isIntraday && $('#autoRefresh').checked) {
+    refreshTimer = setTimeout(loadKline, 30000);
+  }
+}
+function renderKline(d) {
+  if (!klineChart) klineChart = echarts.init($('#klineChart'), null, { renderer: 'canvas' });
+  const dates = d.dates;
+  const up = '#ef4d56', down = '#2bb673';
+  const maColors = { MA5: '#f2c14e', MA10: '#5b9dff', MA20: '#c77dff', MA60: '#4dd0c1' };
+  const option = {
+    backgroundColor: 'transparent',
+    animation: false,
+    legend: { top: 0, left: 8, textStyle: { color: '#8b93a7' }, itemWidth: 12, itemHeight: 8 },
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'cross' }, backgroundColor: '#171c28',
+      borderColor: '#232a38', textStyle: { color: '#e6e8ee', fontSize: 12 }
+    },
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+    grid: [
+      { left: 58, right: 20, top: 26, height: '50%' },
+      { left: 58, right: 20, top: '60%', height: '12%' },
+      { left: 58, right: 20, top: '76%', height: '16%' }
+    ],
+    xAxis: [0, 1, 2].map(i => ({
+      type: 'category', data: dates, gridIndex: i, boundaryGap: false,
+      axisLine: { lineStyle: { color: '#2a3242' } },
+      axisLabel: { show: i === 2, color: '#8b93a7', fontSize: 11 },
+      splitLine: { show: false }, axisTick: { show: false }
+    })),
+    yAxis: [
+      { scale: true, gridIndex: 0, position: 'left', axisLabel: { color: '#8b93a7', fontSize: 11 },
+        splitLine: { lineStyle: { color: '#1a1f2b' } }, axisLine: { show: false } },
+      { scale: true, gridIndex: 1, axisLabel: { show: false }, splitLine: { show: false }, axisLine: { show: false } },
+      { scale: true, gridIndex: 2, axisLabel: { color: '#8b93a7', fontSize: 10 },
+        splitLine: { lineStyle: { color: '#1a1f2b' } }, axisLine: { show: false } }
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1, 2], start: d.is_intraday ? 0 : 55, end: 100 },
+      { type: 'slider', xAxisIndex: [0, 1, 2], bottom: 4, height: 16,
+        borderColor: '#232a38', fillerColor: 'rgba(91,157,255,.12)',
+        textStyle: { color: '#8b93a7' }, start: d.is_intraday ? 0 : 55, end: 100 }
+    ],
+    series: [
+      {
+        name: 'K线', type: 'candlestick', data: d.candles,
+        itemStyle: { color: up, color0: down, borderColor: up, borderColor0: down }
+      },
+      ...Object.entries(d.ma).map(([name, arr]) => ({
+        name, type: 'line', data: arr, smooth: true, showSymbol: false,
+        lineStyle: { width: 1, color: maColors[name] || '#888' }, itemStyle: { color: maColors[name] }
+      })),
+      {
+        name: '成交量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+        data: d.volumes.map(v => ({ value: v[1], itemStyle: { color: v[2] === 'up' ? up : down, opacity: .65 } }))
+      },
+      {
+        name: 'MACD', type: 'bar', xAxisIndex: 2, yAxisIndex: 2,
+        data: (d.macd.MACD || []).map(v => ({ value: v, itemStyle: { color: (v || 0) >= 0 ? up : down } }))
+      },
+      { name: 'DIF', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: d.macd.DIF, showSymbol: false,
+        lineStyle: { width: 1, color: '#f2c14e' } },
+      { name: 'DEA', type: 'line', xAxisIndex: 2, yAxisIndex: 2, data: d.macd.DEA, showSymbol: false,
+        lineStyle: { width: 1, color: '#5b9dff' } }
+    ]
+  };
+  klineChart.setOption(option, true);
+  klineChart.resize();
+}
+function renderSnapshot(s, name, code, period) {
+  if (!s) { $('#snapBox').textContent = '无数据'; return; }
+  const periodLabel = { day: '日线', week: '周线', month: '月线',
+                        '1m': '1 分钟', '5m': '5 分钟', '15m': '15 分钟',
+                        '30m': '30 分钟', '60m': '60 分钟' }[period] || period || '日线';
+  const rows = [
+    ['标的', (name || '') + ' ' + code],
+    ['图表周期', periodLabel],
+    ['数据日期', s.date || '-'],
+    ['收盘', fmt(s.close)],
+    ['涨跌幅', fmtPct(s.pct)],
+    ['MA5 / MA10', fmt(s.ma5) + ' / ' + fmt(s.ma10)],
+    ['MA20 / MA60', fmt(s.ma20) + ' / ' + fmt(s.ma60)],
+    ['MACD', fmt(s.dif, 3) + ' / ' + fmt(s.dea, 3)],
+    ['RSI(14)', fmt(s.rsi, 1)],
+    ['KDJ', fmt(s.k, 1) + ' / ' + fmt(s.d, 1) + ' / ' + fmt(s.j, 1)],
+    ['布林上/下轨', fmt(s.boll_up) + ' / ' + fmt(s.boll_low)],
+    ['量能 / 5日均量', fmt(s.vol_ratio5, 2) + ' 倍'],
+    ['距60日高点', fmt(s.drawdown_from_high60, 1) + '%']
+  ];
+  let html = '<dl style="margin:0">';
+  for (const [k, v] of rows) html += '<dt>' + k + '</dt><dd>' + v + '</dd>';
+  html += '</dl><div style="margin-top:12px">'
+    + (s.signals || []).map(x => '<span class="pill">' + x + '</span>').join('') + '</div>';
+  $('#snapBox').className = '';
+  $('#snapBox').innerHTML = html;
+}
+async function loadFinancials() {
+  const code = $('#stockCode').value.trim();
+  const card = $('#finCard'), box = $('#finBox');
+  card.style.display = 'block';
+  box.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const d = await getJSON('/api/financials?code=' + encodeURIComponent(code));
+    if (!d.rows.length) { box.innerHTML = '<div class="empty">暂无财务数据</div>'; return; }
+    let html = '<table><thead><tr><th>报告期</th><th>营收</th><th>营收同比</th><th>归母净利</th>'
+      + '<th>净利同比</th><th>ROE</th><th>毛利率</th><th>净利率</th><th>资产负债率</th><th>EPS</th></tr></thead><tbody>';
+    for (const r of d.rows) {
+      html += '<tr><td>' + (r.report_name || r.report_date) + '</td>'
+        + '<td>' + big(r.revenue) + '</td><td class="' + cls(r.revenue_yoy) + '">' + fmtPct(r.revenue_yoy) + '</td>'
+        + '<td>' + big(r.net_profit) + '</td><td class="' + cls(r.net_profit_yoy) + '">' + fmtPct(r.net_profit_yoy) + '</td>'
+        + '<td>' + fmt(r.roe) + '%</td><td>' + fmt(r.gross_margin) + '%</td>'
+        + '<td>' + fmt(r.net_margin) + '%</td><td>' + fmt(r.debt_ratio) + '%</td>'
+        + '<td>' + fmt(r.eps) + '</td></tr>';
+    }
+    box.innerHTML = html + '</tbody></table>';
+  } catch (e) {
+    box.innerHTML = '<div class="err">' + e.message + '</div>';
+  }
+}
+
+/* ---------------- 回测 ---------------- */
+let equityChart = null;
+let btRan = false;
+let btCodes = [];
+let favItems = [];
+
+function normalizeCode(raw) {
+  const text = String(raw || '').trim();
+  const m = text.match(/\d{6}/);
+  if (!m) return '';
+  const digits = m[0];
+  const lower = text.toLowerCase();
+  let market;
+  if (lower.includes('sh') || lower.endsWith('.sh')) market = 'sh';
+  else if (lower.includes('sz') || lower.endsWith('.sz')) market = 'sz';
+  else if (lower.includes('bj') || lower.endsWith('.bj')) market = 'bj';
+  else if (/^(6|9|5)/.test(digits)) market = 'sh';
+  else if (/^(4|8)/.test(digits)) market = 'bj';
+  else market = 'sz';
+  return market + digits;
+}
+
+function renderBtCodes() {
+  const box = $('#btCodesBox');
+  const input = $('#btCodeInput');
+  box.querySelectorAll('.chip').forEach(n => n.remove());
+  btCodes.forEach((code, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = '<b>' + code + '</b><button title="移除" onclick="removeBtCode(' + idx + ')">×</button>';
+    box.insertBefore(chip, input);
+  });
+}
+
+function addBtCode(raw, silent) {
+  const code = normalizeCode(raw);
+  if (!code) {
+    if (!silent) $('#btError').innerHTML = '<div class="err">代码格式不对：' + raw + '（示例 600519 或 sh600519）</div>';
+    return false;
+  }
+  if (btCodes.includes(code)) {
+    if (!silent) $('#btHint').textContent = code + ' 已在列表中';
+    return false;
+  }
+  if (btCodes.length >= 8) {
+    $('#btError').innerHTML = '<div class="err">最多同时回测 8 只标的</div>';
+    return false;
+  }
+  btCodes.push(code);
+  renderBtCodes();
+  $('#btError').innerHTML = '';
+  return true;
+}
+
+function removeBtCode(idx) {
+  btCodes.splice(idx, 1);
+  renderBtCodes();
+}
+
+function fillFavSelect() {
+  const sel = $('#btFavSelect');
+  const head = '<option value="">＋ 从自选股选择…</option>';
+  sel.innerHTML = head + favItems.map(i => '<option value="' + i.code + '">' + i.code + ' ' + i.name + '</option>').join('');
+  sel.value = '';
+}
+
+function addFavToBacktest(sel) {
+  if (!sel.value) return;
+  addBtCode(sel.value, false);
+  sel.value = '';
+}
+
+async function runBacktest() {
+  if (!btCodes.length) {
+    $('#btError').innerHTML = '<div class="err">请先添加标的：直接输入代码回车，或从右侧下拉框选自选股</div>';
+    $('#btHint').textContent = '';
+    return;
+  }
+  const code = btCodes.join(',');
+  const strategy = $('#btStrategy').value;
+  const days = $('#btDays').value;
+  const capital = $('#btCapital').value.trim() || '100000';
+  let params = $('#btParams').value.trim() || '{}';
+  try { JSON.parse(params); } catch (e) { $('#btError').innerHTML = '<div class="err">参数不是合法 JSON</div>'; return; }
+  $('#btHint').textContent = '运行中…'; $('#btError').innerHTML = '';
+  try {
+    const d = await getJSON('/api/backtest?code=' + encodeURIComponent(code) + '&strategy=' + strategy
+      + '&days=' + days + '&capital=' + encodeURIComponent(capital)
+      + '&params=' + encodeURIComponent(params));
+    btRan = true;
+    $('#btHint').textContent = d.metrics.start + ' ~ ' + d.metrics.end;
+    if (d.warnings && d.warnings.length) {
+      $('#btError').innerHTML = d.warnings.map(w => '<div class="err">⚠ ' + w + '</div>').join('');
+    }
+    const m = d.metrics;
+    const cards = [
+      ['累计收益', fmtPct(m.total_return), cls(m.total_return)],
+      ['年化收益', fmtPct(m.cagr), cls(m.cagr)],
+      ['最大回撤', fmt(m.max_drawdown) + '%', 'down'],
+      ['夏普比率', fmt(m.sharpe), ''],
+      ['胜率', fmt(m.win_rate) + '%', ''],
+      ['交易次数', m.trades, ''],
+      ['盈亏比', m.profit_factor === null ? '∞' : fmt(m.profit_factor), ''],
+      ['持仓占比', fmt(m.exposure) + '%', ''],
+      ['同期买入持有', fmtPct(m.benchmark_return), cls(m.benchmark_return)],
+      ['超额收益', fmtPct(m.excess_return), cls(m.excess_return)],
+      ['年化波动', fmt(m.ann_vol) + '%', ''],
+      ['Calmar', fmt(m.calmar), '']
+    ];
+    $('#btMetrics').innerHTML = cards.map(([k, v, c]) =>
+      '<div class="metric"><div class="k">' + k + '</div><div class="v ' + c + '">' + v + '</div></div>').join('');
+    renderEquity(d);
+    renderTrades(d.trades);
+  } catch (e) {
+    $('#btError').innerHTML = '<div class="err">' + e.message + '</div>';
+    $('#btHint').textContent = '';
+  }
+}
+function renderEquity(d) {
+  if (!equityChart) equityChart = echarts.init($('#equityChart'));
+  const dates = (d.equity || []).map(x => x.date);
+  const equity = (d.equity || []).map(x => x.value);
+  const benchMap = {};
+  (d.benchmark || []).forEach(x => benchMap[x.date] = x.value);
+  const bench = dates.map(x => benchMap[x]);
+  equityChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis', backgroundColor: '#171c28', borderColor: '#232a38', textStyle: { color: '#e6e8ee' } },
+    legend: { top: 0, textStyle: { color: '#8b93a7' } },
+    grid: { left: 70, right: 24, top: 30, bottom: 34 },
+    xAxis: { type: 'category', data: dates, axisLabel: { color: '#8b93a7' }, axisLine: { lineStyle: { color: '#2a3242' } } },
+    yAxis: { type: 'value', scale: true, axisLabel: { color: '#8b93a7' },
+             splitLine: { lineStyle: { color: '#1a1f2b' } } },
+    series: [
+      { name: '策略', type: 'line', data: equity, showSymbol: false, lineStyle: { width: 2, color: '#5b9dff' },
+        areaStyle: { color: 'rgba(91,157,255,.10)' } },
+      { name: '买入持有', type: 'line', data: bench, showSymbol: false, lineStyle: { width: 1, color: '#8b93a7', type: 'dashed' } }
+    ]
+  }, true);
+  equityChart.resize();
+}
+function renderTrades(trades) {
+  const box = $('#btTrades');
+  if (!trades || !trades.length) { box.className = 'empty'; box.textContent = '本次回测没有产生交易'; return; }
+  let html = '<table><thead><tr><th>买入日</th><th>卖出日</th><th>买入价</th><th>卖出价</th>'
+    + '<th>股数</th><th>盈亏(元)</th><th>收益率</th><th>持仓天数</th></tr></thead><tbody>';
+  for (const t of trades.slice(-50).reverse()) {
+    html += '<tr><td>' + t.entry_date + '</td><td>' + t.exit_date + '</td>'
+      + '<td>' + fmt(t.entry_price) + '</td><td>' + fmt(t.exit_price) + '</td>'
+      + '<td>' + t.shares + '</td><td class="' + cls(t.pnl) + '">' + fmt(t.pnl) + '</td>'
+      + '<td class="' + cls(t.pnl) + '">' + fmtPct(t.pnl_pct) + '</td>'
+      + '<td>' + t.hold_days + '</td></tr>';
+  }
+  box.className = ''; box.innerHTML = html + '</tbody></table>';
+}
+
+/* ---------------- 选股 ---------------- */
+async function runScreen() {
+  const preset = $('#screenPreset').value;
+  const limit = $('#screenLimit').value;
+  const box = $('#screenBox');
+  box.className = 'empty'; box.textContent = '筛选中，请稍候…';
+  try {
+    const d = await getJSON('/api/screen?preset=' + preset + '&limit=' + limit);
+    if (!d.items.length) { box.textContent = '没有符合条件的标的'; return; }
+    let html = '<div class="muted" style="margin-bottom:8px">' + d.preset + '：' + d.desc + '</div>'
+      + '<table><thead><tr><th>代码</th><th>名称</th><th>现价</th><th>涨跌幅</th><th>PE(TTM)</th>'
+      + '<th>PB</th><th>总市值</th><th>成交额</th><th>换手</th><th>量比</th><th>RSI</th></tr></thead><tbody>';
+    for (const it of d.items) {
+      html += '<tr onclick="openStock(\'' + it.code + '\')"><td>' + it.code + '</td><td>' + it.name + '</td>'
+        + '<td>' + fmt(it.price) + '</td><td class="' + cls(it.pct) + '">' + fmtPct(it.pct) + '</td>'
+        + '<td>' + fmt(it.pe_ttm) + '</td><td>' + fmt(it.pb) + '</td>'
+        + '<td>' + it.total_mv_text + '</td><td>' + it.amount_text + '</td>'
+        + '<td>' + fmt(it.turnover) + '%</td><td>' + fmt(it.volume_ratio) + '</td>'
+        + '<td>' + fmt(it.rsi, 1) + '</td></tr>';
+    }
+    box.className = ''; box.innerHTML = html + '</tbody></table>';
+  } catch (e) {
+    box.className = 'err'; box.textContent = e.message;
+  }
+}
+
+/* ---------------- 预警 ---------------- */
+async function loadAlerts() {
+  const box = $('#alertBox');
+  try {
+    const d = await getJSON('/api/alerts?limit=50');
+    if (!d.items.length) { box.className = 'empty'; box.textContent = '暂无预警记录'; return; }
+    let html = '<table><thead><tr><th>时间</th><th>代码</th><th>规则</th><th style="text-align:left">信息</th><th>价格</th></tr></thead><tbody>';
+    for (const a of d.items) {
+      html += '<tr style="cursor:default"><td>' + a.ts + '</td><td>' + a.code + '</td><td>' + a.rule + '</td>'
+        + '<td style="text-align:left">' + (a.message || '') + '</td><td>' + fmt(a.price) + '</td></tr>';
+    }
+    box.className = ''; box.innerHTML = html + '</tbody></table>';
+  } catch (e) { box.className = 'err'; box.textContent = e.message; }
+}
+
+/* ---------------- 通用 ---------------- */
+function tickClock() {
+  const d = new Date();
+  $('#clock').textContent = d.toLocaleString('zh-CN', { hour12: false });
+}
+function refreshAll() {
+  const active = document.querySelector('nav button.active').dataset.tab;
+  if (active === 'watch') loadWatchlist(true);
+  else if (active === 'stock') loadKline();
+  else if (active === 'alerts') loadAlerts();
+}
+window.addEventListener('resize', () => { klineChart && klineChart.resize(); equityChart && equityChart.resize(); });
+setInterval(tickClock, 1000); tickClock();
+
+/* 支持深链接：/?tab=stock&code=600519 直接打开个股页 */
+const qs = new URLSearchParams(location.search);
+if (qs.get('code')) {
+  $('#stockCode').value = qs.get('code');
+  addBtCode(qs.get('code'), true);
+}
+if (qs.get('period')) $('#stockPeriod').value = qs.get('period');
+const initialTab = qs.get('tab');
+$('#btParams').value = '{"fast":5,"slow":20}';
+if (initialTab) {
+  setTab(initialTab);
+  if (initialTab === 'stock') loadKline();
+} else {
+  loadWatchlist();
+}
+loadFavSet();
+$('#autoRefresh').addEventListener('change', () => {
+  if ($('#autoRefresh').checked) loadKline();
+  else if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+});
+
+</script>
+</body>
+</html>

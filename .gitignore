@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+
+# 本地数据（数据库默认在 ~/.local/share/aquant，这里兜底）
+*.db
+*.db-wal
+*.db-shm
+*.pkl
+reports/
+logs/
+cache/
+
+# Agent 工作区元数据（记忆、会话，不属于项目代码）
+.workbuddy/
+
+# 临时产物
+.shots/
+*.log
+.DS_Store
+Thumbs.db

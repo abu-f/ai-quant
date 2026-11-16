@@ -1,0 +1,31 @@
+# 自选股与预警规则（aquant 自动维护，手工编辑同样生效）
+# 代码支持 600519 / sh600519 / 600519.SH
+# 规则说明：./quant alert rules
+
+watchlist:
+- code: '000001'
+  name: 平安银行
+  note: 银行板块风向标
+  rules:
+  - type: price_below
+    value: 10
+  - type: rsi_threshold
+    period: 14
+    op: below
+    value: 30
+- code: '300750'
+  name: 宁德时代
+  note: 新能源权重
+  rules:
+  - type: volume_spike
+    ratio: 2.0
+    window: 5
+  - type: breakout
+    window: 20
+    direction: up
+- code: '510300'
+  name: 沪深300ETF
+  note: 宽基 ETF，观察大盘
+  rules:
+  - type: pct_change_below
+    value: -2
