@@ -302,6 +302,9 @@ git pull --rebase
 - `.gitattributes` 统一 LF，保证 `quant`、`setup.sh` 在 WSL/Linux 上克隆后可直接执行。
 - `.github/workflows/tests.yml` 会在每次 push 时跑 27 项离线单测（不访问行情接口），失败即标红。
 
+> **WSL 里也能直接用 git**：项目放在 `/mnt/c` 下，WSL 的 git 已配置 `core.sshCommand` 指向 Windows 的 `ssh.exe`，复用同一把密钥推送，无需把私钥复制进 WSL。换机器时若要从 WSL 提交，执行一次：
+> `git config --global core.sshCommand '/mnt/c/Windows/System32/OpenSSH/ssh.exe'`
+
 ---
 
 ## 十、可扩展方向
