@@ -1,0 +1,24 @@
+# aquant 自托管部署（可选）
+#   docker compose up -d --build
+#   浏览器打开 http://127.0.0.1:8770
+#
+# 数据（SQLite、报告、日志）落在命名卷 aquant-data 里，删容器不丢数据。
+# 自选股与规则用 ./config 目录挂载，改完重启即可生效。
+
+services:
+  aquant:
+    build: .
+    image: aquant:latest
+    container_name: aquant
+    ports:
+      - "127.0.0.1:8770:8770"   # 只在本机访问；要局域网访问改成 "8770:8770"
+    environment:
+      TZ: Asia/Shanghai
+      AQUANT_HOME: /data
+    volumes:
+      - aquant-data:/data
+      - ./config:/app/config
+    restart: unless-stopped
+
+volumes:
+  aquant-data:

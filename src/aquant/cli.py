@@ -23,6 +23,8 @@ from . import __version__, indicators as ind
 from .alerts import RULE_TYPES, check_watchlist, notify, validate_rule
 from .backtest import STRATEGIES, BacktestConfig, build_position, run_portfolio, run_single
 from .backtest.engine import metrics_lines
+from .backtest.optimizer import (OBJECTIVES, deflated_sharpe, grid_search, grid_size,
+                                 parse_grid, walk_forward)
 from .config import PROJECT_ROOT, Config, load_config
 from .data import INTRADAY_PERIODS, MarketData
 from .report import build_daily_report
@@ -439,6 +441,177 @@ def cmd_screen(ctx: Ctx, args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------- 参数寻优
+def _load_single_bars(ctx: Ctx, args: argparse.Namespace, raw: str) -> tuple[Symbol, pd.DataFrame]:
+    sym = Symbol.parse(raw)
+    df = ctx.md.bars(sym, days=max(args.days, 320), adjust=args.adjust)
+    if args.start:
+        df = df[df.index >= pd.Timestamp(args.start)]
+    if args.end:
+        df = df[df.index <= pd.Timestamp(args.end)]
+    return sym, df
+
+
+def _run_optimize(ctx: Ctx, args: argparse.Namespace, codes: list[str]) -> int:
+    if len(codes) != 1:
+        console.print("[yellow]参数寻优一次只支持一个标的（多标的请分别寻优后再组合）。[/yellow]")
+        return 1
+    sym, df = _load_single_bars(ctx, args, codes[0])
+    if len(df) < 120:
+        console.print(f"[red]{sym.tencent} 数据不足（{len(df)} 根），至少需要 120 根。[/red]")
+        return 1
+
+    try:
+        grid = parse_grid(args.optimize)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+
+    bt_cfg = BacktestConfig.from_config(ctx.cfg)
+    if args.capital:
+        bt_cfg.initial_capital = float(args.capital)
+    if args.slippage is not None:
+        bt_cfg.slippage_bps = float(args.slippage)
+
+    if not args.json:
+        console.print(
+            f"[dim]{sym.tencent} · {args.strategy} · 网格 {grid_size(grid)} 组 · "
+            f"目标 {OBJECTIVES.get(args.objective, args.objective)} · 样本 {len(df)} 根[/dim]"
+        )
+
+    try:
+        if args.walkforward:
+            wf = walk_forward(df, args.strategy, grid, bt_cfg,
+                              train_days=args.train, test_days=args.test,
+                              step_days=args.step, objective=args.objective,
+                              min_trades=args.min_trades, code=sym.tencent)
+        else:
+            trials = grid_search(df, args.strategy, grid, bt_cfg, args.objective,
+                                 args.min_trades, sym.tencent)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+
+    if args.json:
+        if args.walkforward:
+            payload = {
+                "mode": "walkforward", "code": sym.tencent, "strategy": args.strategy,
+                "grid": grid, "objective": args.objective,
+                "is_mean_sharpe": wf.is_mean_sharpe, "oos_mean_sharpe": wf.oos_mean_sharpe,
+                "consistency": wf.consistency, "oos_metrics": wf.oos_metrics,
+                "folds": [{"index": f.index, "train_start": f.train_start, "train_end": f.train_end,
+                           "test_start": f.test_start, "test_end": f.test_end,
+                           "best_params": f.best_params, "is_sharpe": f.is_metrics.get("sharpe"),
+                           "oos_sharpe": f.oos_metrics.get("sharpe"),
+                           "degradation": f.degradation} for f in wf.folds],
+            }
+        else:
+            payload = {
+                "mode": "grid", "code": sym.tencent, "strategy": args.strategy,
+                "grid": grid, "objective": args.objective,
+                "trials": [{"params": t.params, "score": t.score,
+                            "sharpe": t.metrics.get("sharpe"),
+                            "total_return": t.metrics.get("total_return"),
+                            "max_drawdown": t.metrics.get("max_drawdown"),
+                            "trades": t.metrics.get("trades")} for t in trials[:args.top]],
+            }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.walkforward:
+        _print_walkforward(wf, sym, args)
+        return 0
+
+    if not trials:
+        console.print("[yellow]所有参数组合都不可用（可能是交易次数不足或数据太短）。"
+                      "试试 --min-trades 0 或放宽网格。[/yellow]")
+        return 1
+    _print_grid(trials, sym, args)
+    return 0
+
+
+def _print_grid(trials: list[Any], sym: Symbol, args: argparse.Namespace) -> None:
+    best = trials[0]
+    keys = list(best.params.keys())
+    table = Table(title=f"{sym.tencent} 参数寻优 Top {min(args.top, len(trials))}"
+                        f"（按 {OBJECTIVES.get(args.objective, args.objective)} 排序）",
+                  title_justify="left")
+    table.add_column("#", justify="right", width=3)
+    for key in keys:
+        table.add_column(key, justify="right")
+    for col in ("夏普", "年化%", "最大回撤%", "交易数"):
+        table.add_column(col, justify="right")
+    for rank, trial in enumerate(trials[:args.top], start=1):
+        row = [str(rank)]
+        row.extend(str(trial.params[k]) for k in keys)
+        row.extend([
+            fmt_num(trial.metrics.get("sharpe")),
+            fmt_pct(trial.metrics.get("cagr")),
+            fmt_num(trial.metrics.get("max_drawdown")),
+            str(trial.metrics.get("trades")),
+        ])
+        table.add_row(*row)
+    console.print(table)
+
+    returns = best.result.equity.pct_change().dropna() if best.result else pd.Series(dtype=float)
+    dsr = deflated_sharpe(returns, [t.metrics.get("sharpe") or 0 for t in trials])
+    console.print(_kv_table(f"最优组合：{' '.join(f'{k}={v}' for k, v in best.params.items())}",
+                            metrics_lines(best.metrics)))
+    if dsr:
+        verdict = "较可信" if dsr["dsr"] >= 0.95 else ("存疑" if dsr["dsr"] >= 0.8 else "很可能过拟合")
+        console.print(
+            f"[dim]Deflated Sharpe：DSR={dsr['dsr']:.3f}（门槛 SR0={dsr['sr0']:.3f}，"
+            f"日夏普={dsr['sr']:.3f}，试验 {int(dsr['trials'])} 组）→ {verdict}[/dim]"
+        )
+        console.print("[dim]DSR 已按搜索次数校正：0.95 以上才谈得上统计显著；"
+                      "参数越多、网格越密，门槛越高。[/dim]")
+    console.print("[dim]提示：本表是同一段历史里挑出来的最好结果，务必用 --walkforward 做样本外验证。[/dim]")
+
+
+def _print_walkforward(wf: Any, sym: Symbol, args: argparse.Namespace) -> None:
+    table = Table(title=f"{sym.tencent} Walk-forward（训练 {args.train} 根 / 测试 {args.test} 根 / 步长 {args.step}）",
+                  title_justify="left")
+    for col in ("折", "训练区间", "测试区间", "最优参数", "样本内夏普", "样本外夏普", "退化"):
+        table.add_column(col, justify="left" if col in ("训练区间", "测试区间", "最优参数") else "right")
+    for fold in wf.folds:
+        params_text = " ".join(f"{k}={v}" for k, v in fold.best_params.items()) if fold.best_params else "-"
+        table.add_row(
+            str(fold.index),
+            f"{fold.train_start}~{fold.train_end}",
+            f"{fold.test_start}~{fold.test_end}",
+            params_text,
+            fmt_num(fold.is_metrics.get("sharpe")),
+            fmt_num(fold.oos_metrics.get("sharpe")),
+            fmt_num(fold.degradation),
+        )
+    console.print(table)
+
+    pairs = [
+        ("折数", f"{len([f for f in wf.folds if f.is_metrics])} / {len(wf.folds)}"),
+        ("样本内平均夏普", fmt_num(wf.is_mean_sharpe)),
+        ("样本外平均夏普", fmt_num(wf.oos_mean_sharpe)),
+        ("样本外正收益折占比", f"{wf.consistency * 100:.0f}%"),
+        ("OOS 累计收益", fmt_pct(wf.oos_metrics.get("total_return"))),
+        ("OOS 年化收益", fmt_pct(wf.oos_metrics.get("cagr"))),
+        ("OOS 最大回撤", f"{fmt_num(wf.oos_metrics.get('max_drawdown'))}%"),
+        ("同期买入持有", fmt_pct(wf.oos_metrics.get("benchmark_return"))),
+    ]
+    console.print(_kv_table("样本外汇总（各折拼接净值）", pairs))
+    curve = sparkline([float(v) for v in wf.equity.tolist()], width=64)
+    console.print(f"OOS 资金曲线 {curve}")
+
+    drop = wf.is_mean_sharpe - wf.oos_mean_sharpe
+    if wf.oos_mean_sharpe <= 0:
+        console.print("[red]⚠ 样本外平均夏普 ≤ 0：这套参数在没见过的数据上没有优势，"
+                      "典型的过拟合信号。[/red]")
+    elif drop >= 0.5:
+        console.print(f"[yellow]⚠ 样本内→样本外夏普下降 {drop:.2f}，衰减明显；"
+                      f"建议减少参数、拉长训练窗口或换更简单的策略。[/yellow]")
+    else:
+        console.print("[green]样本内外表现相对一致，参数稳定性尚可。[/green]")
+    console.print("[dim]说明：每折用紧邻的下一段数据做样本外回测，测试段不参与选参，不存在未来函数。[/dim]")
+
+
 # --------------------------------------------------------------------- alert
 def cmd_alert(ctx: Ctx, args: argparse.Namespace) -> int:
     if args.alert_action == "list":
@@ -555,6 +728,9 @@ def cmd_backtest(ctx: Ctx, args: argparse.Namespace) -> int:
     if not codes:
         console.print("[yellow]请指定至少一个代码，例如：./quant backtest 600519[/yellow]")
         return 1
+
+    if getattr(args, "optimize", None):
+        return _run_optimize(ctx, args, codes)
 
     params = _parse_params(args.param)
     bt_cfg = BacktestConfig.from_config(ctx.cfg)
@@ -729,6 +905,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  ./quant screen --preset value       # 低估值筛选\n"
             "  ./quant alert check                 # 检查预警\n"
             "  ./quant backtest 600519 --strategy ma_cross --param fast=5 --param slow=20\n"
+            "  ./quant backtest 600519 --optimize \"fast=3,5,8;slow=10,20,40\" --walkforward\n"
             "  ./quant web                         # 本地可视化工作台\n"
         ),
     )
@@ -815,6 +992,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--slippage", type=float, default=None, help="单边滑点（bp）")
     p.add_argument("--adjust", default=None, choices=["qfq", "hfq", "bfq"])
     p.add_argument("--trades", type=int, default=10, help="展示最近 N 笔交易")
+    p.add_argument("--optimize", help='参数网格寻优，如 "fast=3,5,8;slow=10,20,40"')
+    p.add_argument("--objective", default="sharpe", choices=list(OBJECTIVES),
+                   help="寻优目标指标")
+    p.add_argument("--walkforward", action="store_true",
+                   help="滚动样本内选参 + 样本外验证（配合 --optimize）")
+    p.add_argument("--train", type=int, default=250, help="walk-forward 训练窗口（交易日）")
+    p.add_argument("--test", type=int, default=60, help="walk-forward 测试窗口（交易日）")
+    p.add_argument("--step", type=int, default=60, help="walk-forward 滚动步长（交易日）")
+    p.add_argument("--min-trades", type=int, default=1, help="参与排名的组合最少交易次数")
+    p.add_argument("--top", type=int, default=10, help="展示前 N 组参数")
     p.add_argument("--json", action="store_true", help="输出 JSON（供脚本/网页使用）")
     p.add_argument("--save", action="store_true", help="写入回测记录")
     p.add_argument("--list", action="store_true", help="列出可用策略")

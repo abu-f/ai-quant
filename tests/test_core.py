@@ -351,5 +351,88 @@ class TestSnapshotResilience(unittest.TestCase):
             self.assertTrue(md.store.get_meta("snapshot_block_until:eastmoney"))
 
 
+class TestOptimizer(unittest.TestCase):
+    """参数网格、walk-forward、DSR（全部离线）。"""
+
+    def setUp(self):
+        self.df = make_bars(420, seed=5, trend=0.0008)
+        self.cfg = BacktestConfig(initial_capital=100_000)
+
+    def test_parse_grid(self):
+        from aquant.backtest import parse_grid, grid_size
+
+        grid = parse_grid("fast=3,5,8;slow=10,20")
+        self.assertEqual(grid, {"fast": [3, 5, 8], "slow": [10, 20]})
+        self.assertEqual(grid_size(grid), 6)
+        with self.assertRaises(ValueError):
+            parse_grid("")
+        with self.assertRaises(ValueError):
+            parse_grid("fast")
+
+    def test_grid_search_sorted_and_filtered(self):
+        from aquant.backtest import grid_search
+
+        trials = grid_search(self.df, "ma_cross", {"fast": [3, 5, 8], "slow": [10, 20, 40]},
+                             self.cfg, objective="sharpe", min_trades=0)
+        self.assertGreaterEqual(len(trials), 3)
+        scores = [t.score for t in trials]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        for trial in trials:  # fast 必须小于 slow
+            self.assertLess(trial.params["fast"], trial.params["slow"])
+
+    def test_grid_search_objective_and_min_trades(self):
+        from aquant.backtest import grid_search
+
+        trials = grid_search(self.df, "ma_cross", {"fast": [5], "slow": [20]},
+                             self.cfg, objective="total_return", min_trades=0)
+        self.assertEqual(len(trials), 1)
+        self.assertAlmostEqual(trials[0].score, trials[0].metrics["total_return"])
+        empty = grid_search(self.df, "ma_cross", {"fast": [5], "slow": [20]},
+                            self.cfg, min_trades=999)
+        self.assertEqual(empty, [])
+
+    def test_walk_forward_no_lookahead(self):
+        from aquant.backtest import walk_forward
+
+        wf = walk_forward(self.df, "ma_cross", {"fast": [3, 5], "slow": [10, 20]},
+                          self.cfg, train_days=150, test_days=50, step_days=50,
+                          min_trades=0)
+        self.assertGreaterEqual(len(wf.folds), 2)
+        self.assertFalse(wf.equity.empty)
+        for fold in wf.folds:
+            # 测试段必须严格晚于训练段，否则就是偷看未来
+            self.assertGreater(fold.test_start, fold.train_end)
+        self.assertIn("total_return", wf.oos_metrics)
+        self.assertTrue(0 <= wf.consistency <= 1)
+
+    def test_walk_forward_rejects_short_data(self):
+        from aquant.backtest import walk_forward
+
+        with self.assertRaises(ValueError):
+            walk_forward(self.df.head(100), "ma_cross", {"fast": [5], "slow": [20]},
+                         self.cfg, train_days=150, test_days=60, step_days=60)
+
+    def test_deflated_sharpe(self):
+        from aquant.backtest import deflated_sharpe
+
+        rng = np.random.default_rng(3)
+        returns = rng.normal(0.0004, 0.01, 300)
+        trials = [0.2, 0.5, 0.8, 1.1, 0.35]
+        out = deflated_sharpe(returns, trials)
+        self.assertIsNotNone(out)
+        self.assertGreaterEqual(out["dsr"], 0.0)
+        self.assertLessEqual(out["dsr"], 1.0)
+        self.assertAlmostEqual(out["trials"], 5.0)
+        # 样本太短或只有一组试验时无法校正
+        self.assertIsNone(deflated_sharpe(returns[:10], trials))
+        self.assertIsNone(deflated_sharpe(returns, [0.5]))
+
+    def test_norm_ppf_roundtrip(self):
+        from aquant.backtest.optimizer import _norm_cdf, _norm_ppf
+
+        for p in (0.01, 0.25, 0.5, 0.9, 0.975, 0.999):
+            self.assertAlmostEqual(_norm_cdf(_norm_ppf(p)), p, places=6)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

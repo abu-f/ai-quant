@@ -23,6 +23,8 @@
 | 自选股监控与预警 | 13 类规则：价格、涨跌幅、均线/MACD/KDJ 交叉、RSI 阈值、突破、放量、回撤 | `alert check --loop` |
 | 选股筛选 | 7 个预设：低估值、短线强势、放量异动、成交活跃、技术超卖、创阶段新高、均线多头 | `screen` |
 | 历史回测 | 8 个策略，含佣金/印花税/过户费/滑点、T+1、100 股整手、组合等权 | `backtest` |
+| 参数寻优 | 参数网格 + 按夏普/年化/回撤排序 + **Deflated Sharpe** 多重检验校正 | `backtest --optimize` |
+| 样本外验证 | **Walk-forward**：滚动窗口样本内选参、紧邻样本外验证，输出退化与稳定性 | `backtest --walkforward` |
 | 每日报告 | Markdown 日报：行情表 + 指标状态 + 规则命中 | `report` |
 | 本地可视化 | 深色工作台：分钟/日/周/月 K 线（蜡烛+均线+成交量+MACD）、资金曲线、选股表、预警记录、自选增删 | `web` |
 | 环境自检 | Python/依赖/5 个数据接口/数据库可写性一次查完 | `doctor` |
@@ -144,6 +146,20 @@ curl -sSL https://bootstrap.pypa.io/get-pip.py | ~/.venvs/aquant/bin/python -
 
 可用 `AQUANT_HOME` 改数据目录，`AQUANT_CONFIG` 改配置路径，`AQUANT_VENV` 改虚拟环境位置。
 
+**方式 B：Docker（不想装 Python 时可选）**
+
+```bash
+docker compose up -d --build      # 首次会构建镜像，约 1~2 分钟
+# 浏览器打开 http://127.0.0.1:8770
+docker compose logs -f            # 看日志
+docker compose down               # 停止（数据在命名卷里，不丢）
+```
+
+- 数据落在命名卷 `aquant-data`（容器内 `/data`），自选股与规则挂载 `./config`，改完 `docker compose restart` 生效。
+- 镜像默认只映射到 `127.0.0.1`，不对局域网暴露；要共享改 `compose.yaml` 里的端口映射。
+- 容器内也能用 CLI：`docker compose exec aquant aquant quote 600519`。
+- 本机没有 Docker 也没关系，WSL 原生方式（方式 A）更轻量。
+
 ---
 
 ## 五、使用方式
@@ -249,6 +265,33 @@ crontab -e
 - 未计冲击成本、涨跌停无法成交、ST/退市规则。
 - 参数越多越容易过拟合。**样本外验证 + 多标的检验**比调参更重要。
 
+### 6.1 参数寻优与样本外验证
+
+单次「调好参数再回测」几乎必然高估——你在同一段历史上反复挑，等于偷看答案。工具提供两条防线：
+
+```bash
+# 网格寻优：9 组参数按夏普排序，并给出 DSR 校正
+./quant backtest 000001 --strategy ma_cross \
+    --optimize "fast=3,5,8;slow=10,20,40" --days 800
+
+# Walk-forward：每折只用训练段选参，紧邻测试段做样本外，滚动拼接
+./quant backtest 000001 --strategy ma_cross \
+    --optimize "fast=3,5,8;slow=10,20,40" --walkforward \
+    --train 200 --test 60 --step 60 --days 800
+```
+
+- `--objective sharpe|cagr|total_return|calmar|excess_return`：可选排序目标
+- `--min-trades 3`：过滤掉交易过少、统计上不可信的组合
+- `--top 10`：展示前 N 组；`--json` 输出机器可读结果
+
+**怎么看结果**
+
+- **DSR（Deflated Sharpe Ratio）**：搜索了 N 组参数后，最高夏普天然偏高。DSR 用试验次数、收益偏度/峰度校正，≥0.95 才算统计显著；参数网格越密，门槛越高。实跑例子：9 组参数的最优组合夏普 0.38、DSR 0.73 → 只能算「存疑」。
+- **Walk-forward 退化列**：每折「样本外夏普 − 样本内夏普」。整段样本内 0.76、样本外 −0.56 这种，就是典型的过拟合信号，无论单次回测收益多好看都不该采信。
+- **样本外正收益折占比**：衡量策略在不同市场阶段的稳定性，比单看总收益更能反映可用性。
+
+> 这套方法论参考了开源项目 [shy3130/tick-stock-panel](https://github.com/shy3130/tick-stock-panel)（MIT）的 walk-forward 与 metrics_v2 设计；本项目为独立实现，未复制其源码。
+
 ---
 
 ## 七、常见问题
@@ -276,7 +319,7 @@ crontab -e
 PYTHONPATH=src ~/.venvs/aquant/bin/python -m unittest discover -s tests -v
 ```
 
-27 项离线测试覆盖：代码规范化、指标数值与「无未来函数」、规则校验与触发、回测成本单调性、T+1、组合回测、SQLite 幂等写入与预警去重、分钟线报文解析、自选股增删、全市场快照分页容错与备用源切换。全部用合成数据/固定报文，不依赖网络。
+34 项离线测试覆盖：代码规范化、指标数值与「无未来函数」、规则校验与触发、回测成本单调性、T+1、组合回测、SQLite 幂等写入与预警去重、分钟线报文解析、自选股增删、全市场快照分页容错与备用源切换、参数网格校验、walk-forward 折切分不重叠、DSR 数值边界。全部用合成数据/固定报文，不依赖网络。
 
 ---
 
@@ -302,7 +345,7 @@ git pull --rebase
 - 只有源码、配置、文档进仓库；数据库、缓存、报告、日志、虚拟环境都不入库（见 `.gitignore`）。
 - `.workbuddy/`（Agent 记忆）和 `.shots/`（临时截图）不进仓库。
 - `.gitattributes` 统一 LF，保证 `quant`、`setup.sh` 在 WSL/Linux 上克隆后可直接执行。
-- `.github/workflows/tests.yml` 会在每次 push 时跑 27 项离线单测（不访问行情接口），失败即标红。
+- `.github/workflows/tests.yml` 会在每次 push 时跑 4 项检查（lint / py3.10 单测 / py3.12 单测 / Docker 构建 / 打包校验，共 34 项离线用例），失败即标红。
 
 > **WSL 里也能直接用 git**：项目放在 `/mnt/c` 下，WSL 的 git 已配置 `core.sshCommand` 指向 Windows 的 `ssh.exe`，复用同一把密钥推送，无需把私钥复制进 WSL。换机器时若要从 WSL 提交，执行一次：
 > `git config --global core.sshCommand '/mnt/c/Windows/System32/OpenSSH/ssh.exe'`
@@ -316,6 +359,17 @@ git pull --rebase
 3. **数据源插件**：akshare/tushare/本地 CSV，接口已按可插拔设计。
 4. **通知渠道**：`alerts.notify()` 里接 Server酱/企业微信机器人/邮件（注意：只发提醒，不发指令）。
 5. **报告增强**：日报加图（matplotlib 或直接内嵌 ECharts 的 HTML）。
+
+---
+
+## 十一、参考与致谢
+
+- [shy3130/tick-stock-panel](https://github.com/shy3130/tick-stock-panel)（MIT，7.9k★）：一个完整形态的 A 股自托管量化工作台。本项目**没有直接复用其代码**，但借鉴了三个设计：
+  1. **Walk-forward 折切分**——训练窗口固定、测试窗口紧接其后，且 `test_start = train_end + 1` 隔断前视泄漏；
+  2. **多重检验校正**——参数搜索后用 Deflated Sharpe（Bailey & López de Prado, 2014）而不是裸夏普下结论；
+  3. **零运维部署**——Docker 一条命令起服务、数据放命名卷。
+- 行情数据来自腾讯 / 新浪 / 东方财富的公开接口，仅用于个人研究。
+- 指标公式遵循通行定义（Wilder RSI、标准 MACD 12/26/9、KDJ 9/3/3、BOLL 20/2）。
 
 ---
 
