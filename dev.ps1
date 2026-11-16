@@ -393,8 +393,14 @@ try {
     # Treat Ctrl-C as input so try/finally is guaranteed to run.
     [Console]::TreatControlCAsInput = $true
 
+    # 非交互环境（CI、输出重定向、后台任务）没有控制台输入设备，
+    # KeyAvailable 会直接抛异常，导致主循环退出并清理掉刚启动的进程。
+    $canReadKeys = $true
+    try { [void][Console]::KeyAvailable } catch { $canReadKeys = $false }
+    if (-not $canReadKeys) { Log-Info 'no console input detected - running in background mode' }
+
     while ($true) {
-        if ([Console]::KeyAvailable) {
+        if ($canReadKeys -and [Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true)
             if (($key.Modifiers -band [ConsoleModifiers]::Control) -and $key.Key -eq 'C') {
                 break
