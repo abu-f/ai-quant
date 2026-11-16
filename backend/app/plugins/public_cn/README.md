@@ -29,8 +29,23 @@
 ## 稳定性说明
 
 公开接口有间歇性限流：东财 `clist` 实测会整段拒连（`RemoteProtocolError`），
-因此本插件**完全避开东财**，只依赖腾讯与新浪。腾讯 `web.ifzq.gtimg.cn` 域名会被 WAF
-拦截（返回 501 HTML），所以日K固定走 `ifzq.gtimg.cn`。
+因此本插件**完全避开东财**，只依赖腾讯与新浪。
+
+腾讯 K 线有两个域名，行为并不一致，实测（2026-11）：
+
+| 域名 | 结果 |
+| --- | --- |
+| `web.ifzq.gtimg.cn/appstock/app/fqkline/get` | 200，返回 `day` / `qfqday` 节点 |
+| `ifzq.gtimg.cn/appstock/app/fqkline/get` | **501**，正文是跳转 `waf.tencent.com/501page.html` 的 HTML |
+
+带不带 `Referer: https://gu.qq.com/` 与浏览器 UA 会影响判定，因此日K按
+`web.` → 裸域名 → 新浪 `scale=240` 三级回退（`client.fetch_daily`）。
+回退到新浪时成交量为「股」，已 /100 换成「手」；新浪日线没有成交额字段，
+`amount` 返回 `None` 而不是补 0。
+
+> 教训：日K最初固定走裸域名，表现为**接口 200 但 `rows` 为空**，前端显示
+> 「待行情」。任何一次域名策略调整都可能让图表整片空窗，所以必须有回退链，
+> 且失败要在日志里留下具体域名与状态码。
 
 ## 调试
 

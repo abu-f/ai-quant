@@ -14,8 +14,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from datetime import date, datetime
-from typing import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterator
+from datetime import datetime
+from typing import ClassVar
 
 import httpx
 import polars as pl
@@ -47,7 +48,7 @@ REQUEST_GAP_S = 0.05
 class _Config:
     """宿主用 ``dataset in provider.config.datasets`` 判断路由，value 内容不参与逻辑。"""
 
-    datasets = {"daily": {}, "minute": {}, "realtime": {}}
+    datasets: ClassVar[dict[str, dict]] = {"daily": {}, "minute": {}, "realtime": {}}
 
 
 class Provider:

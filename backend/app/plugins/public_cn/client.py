@@ -4,20 +4,24 @@
 所有对外函数返回 Python 原生结构（dict / list[tuple]），由 provider 层转 Polars。
 
 数据来源与实测（2026-11）：
-- 日K：腾讯 ``ifzq.gtimg.cn`` fqkline（``param=<code>,day,,,count,`` 不带复权参数 → 不复权原始价）
+- 日K：腾讯 ``web.ifzq.gtimg.cn`` fqkline（``param=<code>,day,<start>,<end>,<count>,`` 空复权参数
+  → ``day`` 节点返回不复权原始价）。注意 ``ifzq.gtimg.cn``（无 ``web.`` 前缀）会被腾讯 WAF
+  直接返回 **HTTP 501 + 跳转页**，实测必用 ``web.`` 域名并带 Referer；
+  两个域名都失败时回退新浪 ``scale=240`` 日线。
 - 分钟K：新浪 ``CN_MarketDataService.getKLineData``（scale=1/5/15/30/60，最多 1023 根，含成交额）
 - 实时：腾讯 ``qt.gtimg.cn`` 批量报价（单请求 800 只约 2.4s，字段含 OHLC/量额/换手）
 - 标的维表：新浪 ``Market_Center.getHQNodeData``（hs_a 节点，5578 只，整轮约 20s）
 
-单位约定：腾讯日K与报价的成交量已是「手」，新浪分钟K为「股」需 /100。
+单位约定：腾讯日K与报价的成交量已是「手」，新浪日K/分钟K为「股」需 /100。
 """
 from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone, timedelta
-from typing import Any, Iterable
+from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 import httpx
 
@@ -25,10 +29,21 @@ logger = logging.getLogger(__name__)
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
-TX_KLINE = "https://ifzq.gtimg.cn/appstock/app/fqkline/get"
+# 顺序即优先级。带 web. 前缀的域名是腾讯前端实际使用的入口；
+# 裸 ifzq.gtimg.cn 常被 WAF 拦截（HTTP 501 + JS 跳转页），保留作兜底而非首选。
+TX_KLINE_HOSTS = (
+    "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get",
+    "https://ifzq.gtimg.cn/appstock/app/fqkline/get",
+)
 TX_QUOTE = "https://qt.gtimg.cn/q="
 SINA_KLINE = "https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData"
 SINA_LIST = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData"
+
+KLINE_HEADERS = {"Referer": "https://gu.qq.com/", "Accept": "*/*"}
+SINA_HEADERS = {"Referer": "https://finance.sina.com.cn"}
+
+# 新浪日线用 scale=240（一天 240 分钟）拿日K，与分钟接口共用同一端点。
+SINA_DAILY_SCALE = 240
 
 MINUTE_SCALE = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "60m": 60}
 QUOTE_BATCH = 800
@@ -112,16 +127,38 @@ def fetch_daily(client: httpx.Client, symbol: str, start: date | None,
     """不复权日K：[(symbol, date, open, high, low, close, volume(手), amount)]。
 
     腾讯返回行序为 ``[日期, 开, 收, 高, 低, 成交量(手)]``——注意开收高低顺序与常见 OHLC 不同。
+    腾讯各域名全部失败时回退新浪日线，保证单个接口被 WAF 拦截不会直接让图表空窗。
     """
     code = to_tencent(symbol)
     if not code:
         return []
+    errors: list[str] = []
+    for url in TX_KLINE_HOSTS:
+        try:
+            rows = _fetch_daily_tencent(client, url, symbol, code, start, end, count)
+        except Exception as exc:  # noqa: BLE001 -- 换下一个域名
+            errors.append(f"{url.split('/')[2]}: {exc}")
+            continue
+        if rows:
+            return rows
+        errors.append(f"{url.split('/')[2]}: 空结果")
+    logger.warning("腾讯日K不可用，回退新浪：%s（%s）", symbol, "；".join(errors))
+    try:
+        return _fetch_daily_sina(client, symbol, code, count)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("新浪日K同样失败：%s（%s）", symbol, exc)
+        return []
+
+
+def _fetch_daily_tencent(client: httpx.Client, url: str, symbol: str, code: str,
+                         start: date | None, end: date | None, count: int) -> list[tuple]:
     params = {"param": f"{code},day,{start.isoformat() if start else ''},"
                        f"{end.isoformat() if end else ''},{max(1, min(count, 800))},"}
-    resp = client.get(TX_KLINE, params=params)
+    resp = client.get(url, params=params, headers=KLINE_HEADERS)
     resp.raise_for_status()
     payload = resp.json()
     node = (payload.get("data") or {}).get(code) or {}
+    # 空复权参数时腾讯返回 day 节点；个别情况仍回 qfqday，这里都接受。
     bars = node.get("day") or node.get("qfqday") or []
     rows: list[tuple] = []
     for bar in bars:
@@ -136,6 +173,31 @@ def fetch_daily(client: httpx.Client, symbol: str, start: date | None,
             continue
         rows.append((symbol, day, open_, high, low, close_,
                      math.floor(volume) if volume is not None else None, None))
+    return rows
+
+
+def _fetch_daily_sina(client: httpx.Client, symbol: str, code: str, count: int) -> list[tuple]:
+    """新浪日线兜底。成交量单位为「股」，需 /100 换成「手」；无成交额字段。"""
+    resp = client.get(SINA_KLINE, params={
+        "symbol": code, "scale": SINA_DAILY_SCALE, "ma": "no",
+        "datalen": max(1, min(count, 1023)),
+    }, headers=SINA_HEADERS)
+    resp.raise_for_status()
+    payload = resp.json()
+    if not isinstance(payload, list):
+        return []
+    rows: list[tuple] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        day = to_date(item.get("day"))
+        open_, high, low, close_ = (_num(item.get("open")), _num(item.get("high")),
+                                    _num(item.get("low")), _num(item.get("close")))
+        if day is None or None in (open_, high, low, close_):
+            continue
+        volume = _num(item.get("volume"))
+        rows.append((symbol, day, open_, high, low, close_,
+                     math.floor(volume / 100.0) if volume is not None else None, None))
     return rows
 
 
