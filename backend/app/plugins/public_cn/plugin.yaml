@@ -1,0 +1,16 @@
+# 公开行情（腾讯 + 新浪）— 免 Key 的兜底数据源
+# 纯 HTTP REST，无额外依赖（runtime: none）。不声明 api_key_env，因此没有 Key 门禁。
+
+name: public_cn
+display_name: "公开行情（腾讯/新浪）"
+runtime: none
+entry: app.plugins.public_cn.provider:Provider
+datasets: [daily, minute, realtime]
+platforms: [any]
+description: "腾讯/新浪公开行情：日K（不复权）、1/5/15/30/60 分钟K、全市场实时快照与标的维表，免 Key。无除权因子与财务数据，跨分红日的价格序列会有跳空。"
+usage_notes:
+  - "实时快照：全市场 5578 只，一轮约 4~6 秒，内存缓存 20 秒；自选/详情走按码补拉（<1 秒）"
+  - "日K：单标的最多 800 根（约 3 年），不复权原始价，无成交额"
+  - "分钟K：1/5/15/30/60 分钟，单标的最多 1023 根（1 分钟约 4 个交易日）"
+  - "标的维表：全市场约 20 秒，每日首次调用后台预热并缓存 12 小时"
+install_hint: "无需配置，选中即用；如需除权因子/财务数据请改用其他数据源或 TickFlow 档位"
