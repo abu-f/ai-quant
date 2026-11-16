@@ -278,7 +278,33 @@ PYTHONPATH=src ~/.venvs/aquant/bin/python -m unittest discover -s tests -v
 
 ---
 
-## 九、可扩展方向
+## 九、版本管理与协作
+
+远端仓库：`git@github.com:abu-f/ai-quant.git`（主分支 `main`，已配置 upstream）。
+
+```bash
+# 换机器：克隆 + 一键安装
+git clone git@github.com:abu-f/ai-quant.git ai-quant && cd ai-quant && ./setup.sh
+
+# 日常
+git status
+git add -A && git commit -m "feat: 说明这次改了什么"
+git push
+
+# 拉取别的机器上的改动（本地有未提交内容时先 commit 或 stash）
+git pull --rebase
+```
+
+约定：
+
+- 只有源码、配置、文档进仓库；数据库、缓存、报告、日志、虚拟环境都不入库（见 `.gitignore`）。
+- `.workbuddy/`（Agent 记忆）和 `.shots/`（临时截图）不进仓库。
+- `.gitattributes` 统一 LF，保证 `quant`、`setup.sh` 在 WSL/Linux 上克隆后可直接执行。
+- `.github/workflows/tests.yml` 会在每次 push 时跑 27 项离线单测（不访问行情接口），失败即标红。
+
+---
+
+## 十、可扩展方向
 
 1. **因子库**：把 `indicators.py` 扩展成因子面板，做横截面排序回测。
 2. **组合层**：仓位管理（等权/波动率倒数）、行业中性、再平衡周期。
