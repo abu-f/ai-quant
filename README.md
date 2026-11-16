@@ -1,5 +1,7 @@
 # aquant · A 股个人量化研究助手（WSL）
 
+[![tests](https://github.com/abu-f/ai-quant/actions/workflows/tests.yml/badge.svg)](https://github.com/abu-f/ai-quant/actions/workflows/tests.yml)
+
 一个跑在 WSL 里的**只读**量化辅助工具：拉行情、存本地、算指标、跑回测、盯自选股、出报告。
 
 > **边界声明（重要）**
