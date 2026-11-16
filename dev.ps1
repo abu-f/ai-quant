@@ -31,6 +31,17 @@ $BackendDir  = Join-Path $Root 'backend'
 $FrontendDir = Join-Path $Root 'frontend'
 $EnvFile     = Join-Path $Root '.env'
 
+# 兼容补丁：某些宿主（IDE/终端集成/CI 代理）会把 PATH 以多个大小写变体
+# （Path / PATH / path）塞进进程环境。Windows PowerShell 5.1 的 Start-Process
+# 在复制环境块时会抛「已添加项。字典中的关键字: Path」，导致启动器直接退出。
+# 这里把 PATH 归一成单一 'Path' 变量，保留原值顺序不变。
+$__pathValue = $env:PATH
+foreach ($__variant in 'Path', 'PATH', 'path') {
+    try { [Environment]::SetEnvironmentVariable($__variant, $null, 'Process') } catch {}
+}
+if ($__pathValue) { [Environment]::SetEnvironmentVariable('Path', $__pathValue, 'Process') }
+Remove-Variable __pathValue, __variant -ErrorAction SilentlyContinue
+
 # Read only launcher-owned keys. Do not execute .env as PowerShell code.
 function Read-DotEnvValue($Path, $Name) {
     if (-not (Test-Path $Path)) { return $null }
