@@ -521,6 +521,7 @@ def get_daily(
 
             if isinstance(e, (WorkBusyError, HeavyJobLimitTimeoutError)):
                 raise HTTPException(503, "日K补齐繁忙，请稍后重试", headers={"Retry-After": "2"}) from e
+            logger.warning("按需补齐日K失败 (%s)", symbol, exc_info=True)
             raise HTTPException(status_code=502, detail="日K数据源获取失败，请检查数据源配置或稍后重试") from e
         if enriched.is_empty():
             return _gzip_payload(

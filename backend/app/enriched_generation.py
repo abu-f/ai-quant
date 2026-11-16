@@ -125,6 +125,35 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _replace_with_retry(source: Path, target: Path, *,
+                        attempts: int = 20, base_delay: float = 0.01) -> None:
+    """原子替换, Windows 上对「目标被并发读者打开」做有界重试。
+
+    POSIX 的 ``rename`` 与目标上的打开句柄无关, 首次必成。Windows 走
+    ``MoveFileEx(REPLACE_EXISTING)``, 只要还有任何句柄打开着目标文件且不是
+    以 ``FILE_SHARE_DELETE`` 打开的就返回 ERROR_ACCESS_DENIED (WinError 5)。
+    CPython 的 ``open()`` / ``Path.read_text()`` 不带 ``FILE_SHARE_DELETE``,
+    因此「写方改标记」与「读方读标记」一旦重叠就会稳定失败 —— 而
+    ``_read_marker`` 在本进程内被行情线程、各 HTTP 请求高频调用, 全市场补数
+    又要逐分区提交 (几百次 replace), 命中概率接近 100%。
+
+    读者只持有文件几毫秒, 有界退避重试即可; 重试耗尽仍抛原始异常, 由调用方
+    按原有语义处理 (绝不做静默降级, 避免世代标记与实际分区不一致)。
+
+    与 ``app.tickflow.repository.replace_with_retry`` 同一思路 —— 那边保护的是
+    分区 parquet, 本函数保护的是世代标记 JSON; 本模块是 repository 的下游依赖,
+    不能反向 import, 故各自持有一份。
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(min(base_delay * (attempt + 1), 0.2))
+
+
 def _write_marker(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -133,7 +162,7 @@ def _write_marker(path: Path, payload: dict[str, Any]) -> None:
             json.dump(payload, stream, separators=(",", ":"))
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        _replace_with_retry(temporary, path)
         _fsync_directory(path.parent)
     finally:
         temporary.unlink(missing_ok=True)
@@ -524,7 +553,7 @@ class EnrichedPublication:
         temporary = out.with_name(f".{out.name}.{uuid.uuid4().hex}.tmp")
 
         def _replace() -> None:
-            os.replace(temporary, out)
+            _replace_with_retry(temporary, out)
             self._changed = True
             self._record_changed_partition(df, out)
             _fsync_directory(out.parent)
